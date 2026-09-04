@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#123b66"><link rel="manifest" href="manifest.webmanifest">
+<title>Coil Finder</title>
+<style>
+*{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;background:#f2f5f8;color:#17202a}header{background:#123b66;color:white;padding:18px 16px 20px;text-align:center}h1{margin:0;font-size:27px}header p{margin:6px 0 0;opacity:.9;font-size:14px}.wrap{max-width:620px;margin:auto;padding:16px}.card{background:white;border-radius:16px;padding:18px;margin-bottom:14px;box-shadow:0 2px 10px #0001}button{width:100%;border:0;border-radius:12px;padding:16px;font-size:18px;font-weight:700;cursor:pointer;background:#123b66;color:#fff;margin-top:10px}button.secondary{background:#e7edf3;color:#123b66}input[type=text]{width:100%;padding:15px;border:1px solid #b9c4cf;border-radius:10px;font-size:18px;margin-top:8px;letter-spacing:1px}.result{display:none;text-align:center}.label{font-size:14px;color:#667;padding-top:6px}.bl{font-size:32px;font-weight:800;margin:5px 0 10px;color:#123b66;word-break:break-word}.coil{font-family:monospace;font-size:17px}.status{padding:12px;border-radius:10px;background:#eef3f7;margin-top:12px;font-size:14px}.ok{background:#e9f7ed;color:#17652b}.warn{background:#fff5dc;color:#795600}.err{background:#fdeaea;color:#8a2020}video{width:100%;border-radius:12px;background:#111;display:none;margin-top:12px}small{color:#68747e;line-height:1.4}.suggest{margin-top:10px;text-align:left}.suggest button{background:#fff;color:#123b66;border:1px solid #b9c4cf;font-size:15px;padding:11px}.hidden{display:none!important}.row{display:flex;gap:8px}.row button{flex:1}.file{margin-top:10px;width:100%}
+</style>
+</head>
+<body>
+<header><h1>🔎 Coil Finder</h1><p>Foto da etiqueta → Coil No. → BL</p></header>
+<div class="wrap">
+<div class="card">
+ <button id="cameraBtn">📷 Fotografar etiqueta</button>
+ <input id="photo" class="file hidden" type="file" accept="image/*" capture="environment">
+ <video id="video" playsinline></video>
+ <canvas id="canvas" class="hidden"></canvas>
+ <button id="snap" class="secondary hidden">Usar esta foto</button>
+ <div id="status" class="status">Banco carregado: <span id="count">...</span> bobinas.</div>
+</div>
+<div class="card">
+ <b>Ou digite o Coil No.</b>
+ <input id="manual" type="text" inputmode="numeric" maxlength="17" placeholder="Ex.: 00340326060038600">
+ <button id="searchBtn">🔍 Procurar BL</button>
+</div>
+<div id="result" class="card result">
+ <div class="label">BL correspondente</div><div id="bl" class="bl"></div>
+ <div class="label">Coil No.</div><div id="coil" class="coil"></div>
+ <div id="extra" class="status"></div>
+ <div id="suggest" class="suggest"></div>
+</div>
+<div class="card"><small><b>Como funciona:</b> o app mantém uma cópia local da listagem. A foto é usada para ler o Coil No.; depois a busca é feita no banco local. O modo manual funciona mesmo sem câmera.</small></div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<script>
+let rows=[], map=new Map();
+const $=id=>document.getElementById(id);
+fetch('coils.json').then(r=>r.json()).then(d=>{rows=d; d.forEach(x=>map.set(x.coil,x)); $('count').textContent=d.length}).catch(()=>setStatus('Não consegui carregar o banco de bobinas.','err'));
+function setStatus(t,c=''){ $('status').textContent=t; $('status').className='status '+c; }
+function normalize(s){return (s||'').replace(/\D/g,'');}
+function distance(a,b){let d=0;for(let i=0;i<Math.max(a.length,b.length);i++)if(a[i]!==b[i])d++;return d+Math.abs(a.length-b.length);}
+function lookup(raw){
+ let q=normalize(raw); if(!q){setStatus('Digite ou leia um Coil No.','warn');return}
+ let exact=map.get(q); $('result').style.display='block'; $('suggest').innerHTML='';
+ if(exact){$('bl').textContent=exact.bl;$('coil').textContent=exact.coil;$('extra').textContent='Item '+exact.item+' • correspondência exata';$('extra').className='status ok';return;}
+ let cand=rows.map(r=>({r,d:distance(q,r.coil)})).filter(x=>x.d<=2).sort((a,b)=>a.d-b.d).slice(0,5);
+ $('bl').textContent='Não encontrado';$('coil').textContent=q;$('extra').textContent='Não houve correspondência exata.';$('extra').className='status warn';
+ if(cand.length){$('suggest').innerHTML='<b>Você quis dizer?</b>'+cand.map(x=>`<button data-coil="${x.r.coil}">${x.r.coil} → ${x.r.bl} (diferença: ${x.d})</button>`).join('');$('suggest').querySelectorAll('button').forEach(b=>b.onclick=()=>lookup(b.dataset.coil));}
+}
+$('searchBtn').onclick=()=>lookup($('manual').value);
+$('manual').addEventListener('input',e=>e.target.value=normalize(e.target.value));
+$('cameraBtn').onclick=()=>$('photo').click();
+$('photo').onchange=async e=>{let f=e.target.files[0];if(f) await processImage(f)};
+async function processImage(file){
+ setStatus('Lendo a etiqueta… aguarde alguns segundos.','warn');
+ try{
+  const {data:{text}}=await Tesseract.recognize(file,'eng',{logger:m=>{if(m.status==='recognizing text')setStatus('Lendo a etiqueta… '+Math.round((m.progress||0)*100)+'%','warn')}});
+  const nums=(text.match(/\d{15,19}/g)||[]).map(normalize);
+  const exact=nums.find(n=>map.has(n)); if(exact){$('manual').value=exact;lookup(exact);setStatus('Coil identificado com sucesso.','ok');return;}
+  // Heurística: procurar números próximos de 17 dígitos e completar por similaridade
+  const near=nums.filter(n=>n.length>=15&&n.length<=19).sort((a,b)=>Math.abs(a.length-17)-Math.abs(b.length-17))[0];
+  if(near){$('manual').value=near;lookup(near);setStatus('Leitura feita; confira o resultado.','warn');}
+  else setStatus('Não consegui identificar o Coil No. Tente outra foto mais próxima e sem reflexo.','err');
+ }catch(err){console.error(err);setStatus('Erro ao ler a foto. Tente novamente.','err')}
+}
+// QR code: browsers que suportam BarcodeDetector podem ler o QR automaticamente.
+$('photo').addEventListener('change', async e=>{const f=e.target.files[0]; if(!f||!('BarcodeDetector' in window))return;try{const bd=new BarcodeDetector({formats:['qr_code']});const codes=await bd.detect(await createImageBitmap(f));const v=codes.map(c=>c.rawValue).find(x=>/\d{17}/.test(x));if(v){const n=v.match(/\d{17}/)[0];$('manual').value=n;lookup(n);}}catch(_){} });
+if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(()=>{});
+</script>
+</body></html>
