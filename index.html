@@ -41,7 +41,7 @@
  </div>
 </div>
 
-<div class="card" id="examples"><b>📷 Exemplos de etiquetas reconhecidas</b><p class="muted">Enquadre a etiqueta inteira, com o código legível. O campo pode aparecer como Coil ID ou COIL No.</p><div class="row" style="align-items:start;flex-wrap:wrap"><div style="flex:1;min-width:180px"><img src="exemplo-etiqueta.jpg" alt="Exemplo original de etiqueta" style="width:100%;border-radius:9px"><small>Exemplo original</small></div><div style="flex:1;min-width:180px"><img src="etiqueta-coil-id.jpg" alt="Etiqueta com campo Coil ID" style="width:100%;border-radius:9px"><small>Exemplo 2 — Coil ID</small></div><div style="flex:1;min-width:180px"><img src="etiqueta-coil-no.jpg" alt="Etiqueta com campo COIL No." style="width:100%;border-radius:9px"><small>Exemplo 3 — COIL No.</small></div></div></div>
+<div class="card" id="examples"><b>📷 Exemplos de etiquetas reconhecidas</b><p class="muted">Enquadre a etiqueta inteira, com o código legível. O campo pode aparecer como Coil ID ou COIL No.</p><div class="row" style="align-items:start;flex-wrap:wrap"><div style="flex:1;min-width:180px"><img src="exemplo-etiqueta.jpg" alt="Exemplo original de etiqueta" style="width:100%;border-radius:9px"><small>Exemplo original</small></div><div style="flex:1;min-width:180px"><img src="etiqueta-coil-id.jpg" alt="Etiqueta com campo Coil ID" style="width:100%;border-radius:9px"><small>Exemplo 2 — Coil ID</small></div><div style="flex:1;min-width:180px"><img src="etiqueta-coil-no.jpg" alt="Etiqueta com campo COIL No." style="width:100%;border-radius:9px"><small>Exemplo 3 — COIL No.</small></div><div style="flex:1;min-width:180px"><img src="etiqueta-coil-manuscrito.jpg" alt="Número de bobina escrito à mão após Coil No." style="width:100%;border-radius:9px"><small>Exemplo 4 — Coil No. manuscrito</small></div></div></div>
 <div class="card">
  <b>🚢 Anexar listas de navios</b>
  <small>Importe a lista do navio em Excel ou PDF digital. As colunas são identificadas pelo nome do header, independentemente da posição.</small>
@@ -188,37 +188,74 @@ function OCRCandidates(text){
  }
  return candidates;
 }
+// A etiqueta pode conter Coil, Coil No., Coil Number, Coil ID ou números manuscritos.
+// Primeiro buscamos números junto ao título do campo; números soltos são último recurso.
+function coilFieldCandidates(text){
+ const found=[]; const lines=text.toUpperCase().split(/\r?\n/);
+ const heading=/\bC[O0]I[L1](?:\s*(?:N[O0]\.?|NUMBER|NUM(?:BER)?|ID|N[°º]))?\b/i;
+ for(let i=0;i<lines.length;i++){
+  const m=heading.exec(lines[i]);if(!m)continue;
+  const trailing=lines[i].slice(m.index+m[0].length);
+  // No caso de números quebrados por espaços, reunimos os grupos numéricos.
+  for(const chunk of [trailing,lines[i+1]||'',(lines[i+1]||'')+' '+(lines[i+2]||'')]){
+   const parts=(chunk.match(/[A-Z0-9]+/g)||[]).filter(x=>x.length>1);
+   for(const part of parts)if(part.length>=7&&part.length<=25)found.push(normalize(part));
+   for(let j=0;j<parts.length;j++){
+    for(let k=2;k<=4&&j+k<=parts.length;k++){
+     const value=normalize(parts.slice(j,j+k).join(''));
+     if(value.length>=7&&value.length<=25)found.push(value);
+    }
+   }
+  }
+ }
+ return [...new Set(found)];
+}
+function OCRMatch(text,activeMap,isLabel){
+ const prioritized=isLabel?[]:coilFieldCandidates(text);
+ if(isLabel){
+  const re=/LABEL\s*[- ]?\s*ID\s*[:#.-]?\s*([A-Z0-9-]+)/ig;
+  for(const m of text.matchAll(re))prioritized.push(normalize(m[1]));
+ }
+ const generic=[...OCRCandidates(text)];
+ const exactPrioritized=prioritized.find(k=>activeMap.has(k));
+ if(exactPrioritized)return {key:exactPrioritized,confidence:'exact'};
+ const exactGeneric=generic.filter(k=>activeMap.has(k));
+ if(exactGeneric.length===1)return {key:exactGeneric[0],confidence:'exact'};
+ // Nunca atribuir BL automaticamente com leitura aproximada ou múltiplos números possíveis.
+ let suggestions=[];
+ for(const c of prioritized){
+  for(const key of activeMap.keys()){
+   if(Math.abs(c.length-key.length)>1)continue;
+   const d=distance(c,key);
+   if(d<=1)suggestions.push({key,d});
+  }
+ }
+ suggestions.sort((a,b)=>a.d-b.d);
+ if(suggestions.length)return {key:suggestions[0].key,confidence:'review'};
+ return null;
+}
 async function processImage(file){
  setStatus('Preparando fotografia…','warn');
  try{
   const photo=await preparePhoto(file);
-  setStatus('Lendo etiqueta…','warn');
   const worker=await getOCRWorker();
+  setStatus('Lendo etiqueta…','warn');
   const result=await worker.recognize(photo);
   const text=result.data.text||'';
   const activeMap=mode==='label'?labelMap:map;
-  const candidates=OCRCandidates(text);
-  // A etiqueta pode identificar o campo como COIL ID, COIL No., COIL NUMBER ou LABEL ID.
-  const field=mode==='label'?/LABEL\s*[- ]?\s*ID\s*[:#.-]?\s*([A-Z0-9-]+)/ig:/COIL\s*(?:ID|NO\.?|NUMBER|N[°º.]?)\s*[:#.-]?\s*([A-Z0-9-]+)/ig;
-  for(const match of text.matchAll(field)){
-   const key=normalize(match[1]);
-   if(activeMap.has(key)){
-    $('manual').value=key;lookup(key);setStatus('Identificação exata confirmada na listagem.','ok');return;
+  const match=OCRMatch(text,activeMap,mode==='label');
+  if(match){
+   $('manual').value=match.key;
+   if(match.confidence==='exact'){
+    lookup(match.key);setStatus('Código encontrado exatamente na listagem. Confira a etiqueta.','ok');
+   }else{
+    // Não mostramos BL para aproximações: exige conferência manual explícita.
+    $('result').style.display='none';
+    setStatus('Possível número: '+match.key+'. Confira e toque em Consultar para confirmar.','warn');
    }
+   return;
   }
-  const exact=[...candidates].find(c=>activeMap.has(c));
-  if(exact){$('manual').value=exact;lookup(exact);setStatus('Identificação exata confirmada na listagem.','ok');return;}
-  // Busca aproximada restrita a códigos de comprimento semelhante; nunca confirma automaticamente.
-  let best=null;
-  for(const c of candidates){
-   for(const key of activeMap.keys()){
-    if(Math.abs(c.length-key.length)>1)continue;
-    const d=distance(c,key);
-    if(d<=1&&(!best||d<best.d))best={key,d};
-   }
-  }
-  if(best){$('manual').value=best.key;lookup(best.key);setStatus('Possível correspondência. Confira visualmente o código antes de aceitar o BL.','warn');return;}
-  setStatus('Código não encontrado na lista. Fotografe mais perto, com a etiqueta bem iluminada, ou digite o número.','err');
+  setStatus('Não encontrei um código exato. Aproxime a câmera do número após COIL e tente novamente ou digite-o.','err');
  }catch(err){console.error(err);setStatus('Não foi possível ler a foto. Confira a conexão na primeira leitura e tente novamente.','err')}
  finally{$('photo').value='';}
 }

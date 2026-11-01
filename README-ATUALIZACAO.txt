@@ -1,9 +1,1 @@
-Coil Finder — leitura otimizada
-
-Substitua os arquivos antigos do GitHub pelos arquivos deste ZIP. Envie os JPGs de exemplo junto com index.html e sw.js.
-
-O OCR reutiliza o mesmo worker e redimensiona a foto para acelerar a leitura. A primeira leitura pode demorar mais por carregar o mecanismo OCR.
-
-Os exemplos de etiquetas não são adicionados à base de bobinas. A base incorporada continua sendo a lista Valença OBIS6.
-
-No iPhone, atualize o Safari após a publicação; se necessário feche e reabra o app da tela inicial.
+Coil Finder — leitura Coil No. e manuscrito.\nSubstitua todos os arquivos no GitHub Pages. Mantenha os 4 JPGs e sw.js.\nA leitura prioriza COIL / COIL NUMBER / COIL ID / COIL NO. e valida códigos na base Valença OBIS6.\nPara aproximações, o operador deve confirmar manualmente antes de consultar o BL.\nA precisão com escrita à mão depende da nitidez da foto e requer teste em campo.\n
